@@ -193,18 +193,11 @@ BEGIN
 END
 ```
 ### Business Query 3
-**Determine Market Badge Based on Sales Volume**
+**Create a stored procedure that can determine the market badge based on the following logic:**
+
+**If total sold quantity > 5 million that market is considered Gold else it is Silver.**
 
 ---
-
-**Objective:**  
-Create a stored procedure to classify markets into badges (**Gold** or **Silver**) based on total sold quantity during a given fiscal year.
-
-**Logic:**
-- If a market’s total sold quantity > 5 million → **Gold**
-- Otherwise → **Silver**
-
-This classification helps in **performance benchmarking across markets** and supports **data-driven investment or incentive decisions**.
 
 #### SQL Code
 
@@ -251,7 +244,7 @@ END
 </figure>
 
 ### Business Query 4
-**Top Markets by Net Sales for a Given Fiscal Year**
+**Identify Top Markets by Net Sales for a Given Fiscal Year.**
 
 ---
 
@@ -366,6 +359,11 @@ SELECT
 FROM 
     cte1;
 ```
+<figure>
+  <img src="https://github.com/user-attachments/assets/ada3a2c7-cb97-42de-abb3-3c2d391e4002">
+  <div align="center"></div>
+</figure>
+
 #### Step 3: Create `sales_preinv_discount` View
 ```sql
 CREATE VIEW sales_preinv_discount AS
@@ -392,6 +390,11 @@ JOIN fact_gross_price g
 JOIN fact_pre_invoice_deductions pre 
     ON pre.customer_code = s.customer_code AND pre.fiscal_year = s.fiscal_year;
 ```
+<figure>
+  <img src="https://github.com/user-attachments/assets/c9a02aca-b25e-4381-b8c2-ec85446a4db5">
+  <div align="center"></div>
+</figure>
+
 #### Step 4: Calculate Net Invoice Sales from View
 ```sql
 SELECT 
@@ -400,6 +403,11 @@ SELECT
 FROM 
     sales_preinv_discount;
 ```
+<figure>
+  <img src="https://github.com/user-attachments/assets/a26d35ae-7b7a-4141-99f2-344ec6b28da3">
+  <div align="center"></div>
+</figure>
+
 #### Step 5: Incorporate Post-Invoice Discounts
 ```sql
 SELECT
@@ -413,6 +421,633 @@ JOIN fact_post_invoice_deductions po
     AND po.product_code = s.product_code 
     AND po.date = s.date;
 ```
+
+#### Step 6: Create `sales_postinv_discount` View
+```sql
+CREATE VIEW sales_postinv_discount AS
+SELECT 
+    s.date,
+    s.fiscal_year,
+    s.customer_code,
+    s.market,
+    s.product_code,
+    s.product,
+    s.variant,
+    s.sold_quantity,
+    s.gross_price,
+    s.gross_price_total,
+    s.pre_invoice_discount_pct,
+    (1 - s.pre_invoice_discount_pct) * s.gross_price_total AS net_invoice_sales,
+    (po.discounts_pct + po.other_deductions_pct) AS post_invoice_discount_pct
+FROM 
+    sales_preinv_discount s
+JOIN fact_post_invoice_deductions po 
+    ON po.customer_code = s.customer_code 
+    AND po.product_code = s.product_code 
+    AND po.date = s.date;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/40c994cc-0119-4305-9e63-8986627215fd">
+  <div align="center"></div>
+</figure>
+
+#### Step 7: Calculate Final Net Sales
+```sql
+SELECT
+    *, 
+    (1 - post_invoice_discount_pct) * net_invoice_sales AS net_sales
+FROM 
+    sales_postinv_discount;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/99df2374-6f39-47f5-a501-1075998b0d34">
+  <div align="center"></div>
+</figure>
+  
+#### Step 8: Create Final `net_sales` View
+
+```sql
+CREATE VIEW net_sales AS
+SELECT 
+    s.date,
+    s.fiscal_year,
+    s.customer_code,
+    s.market,
+    s.product_code,
+    s.product,
+    s.variant,
+    s.sold_quantity,
+    s.gross_price,
+    s.gross_price_total,
+    s.pre_invoice_discount_pct,
+    s.net_invoice_sales,
+    s.post_invoice_discount_pct,
+    (1 - s.post_invoice_discount_pct) * s.net_invoice_sales AS net_sales
+FROM 
+    sales_postinv_discount s;
+```
+#### Step 9: Query Top Markets by Net Sales
+```sql
+SELECT 
+    market,
+    ROUND(SUM(net_sales)/1000000, 2) AS net_sales_mln
+FROM 
+    net_sales
+WHERE 
+    fiscal_year = 2021
+GROUP BY 
+    market
+ORDER BY 
+    net_sales_mln DESC
+LIMIT 5;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/bea25c5e-5172-4f8d-aa1c-80f015b83383">
+  <div align="center"></div>
+</figure>
+
+#### Stored Procedure: `get_top_n_markets_by_net_sales`
+
+This stored procedure returns the **top N markets** by **net sales** for a given fiscal year. It accepts two parameters:
+
+- `in_fiscal_year` (INT): The fiscal year for which to calculate net sales.
+- `in_top_n` (INT): The number of top markets to return.
+
+##### SQL Code
+
+```sql
+CREATE PROCEDURE `get_top_n_markets_by_net_sales`(
+    IN in_fiscal_year INT,
+    IN in_top_n INT
+)
+BEGIN
+    SELECT 
+        market,
+        ROUND(SUM(net_sales) / 1000000, 2) AS net_sales_mln
+    FROM 
+        net_sales
+    WHERE 
+        fiscal_year = in_fiscal_year
+    GROUP BY 
+        market
+    ORDER BY 
+        net_sales_mln DESC
+    LIMIT 
+        in_top_n;
+END
+```
+### Business Query 5
+**Identify Top Customers by Net Sales for a Given Fiscal Year.**
+
+This query identifies the **top 5 customers** by net sales for a specific fiscal year.  
+It uses the `net_sales` view and joins with the `dim_customer` table to retrieve customer names for reporting.
+
+---
+
+#### SQL Query
+```sql
+SELECT 
+    c.customer,
+    ROUND(SUM(net_sales) / 1000000, 2) AS net_sales_mln
+FROM 
+    net_sales n
+JOIN 
+    dim_customer c 
+    ON n.customer_code = c.customer_code
+WHERE 
+    fiscal_year = 2021
+    AND c.market = 'India'
+GROUP BY 
+    c.customer
+ORDER BY 
+    net_sales_mln DESC
+LIMIT 5;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/917aaac6-f4d7-4543-a61d-fd85a64bf1e4">
+  <div align="center"></div>
+</figure>
+
+#### Stored Procedure: `get_top_n_customers_by_net_sales`
+
+To make the query for top customers by net sales reusable and dynamic, a stored procedure was created. This procedure accepts parameters for the **market**, **fiscal year**, and the **number of top customers (N)** to return.
+
+##### SQL Code
+
+```sql
+CREATE PROCEDURE `get_top_n_customers_by_net_sales`(
+    IN in_market VARCHAR(45),
+    IN in_fiscal_year INT,
+    IN in_top_n INT
+)
+BEGIN
+    SELECT 
+        c.customer,
+        ROUND(SUM(net_sales)/1000000, 2) AS net_sales_mln
+    FROM 
+        net_sales n
+    JOIN 
+        dim_customer c ON n.customer_code = c.customer_code
+    WHERE 
+        fiscal_year = in_fiscal_year 
+        AND c.market = in_market
+    GROUP BY 
+        c.customer
+    ORDER BY 
+        net_sales_mln DESC
+    LIMIT 
+        in_top_n;
+END
+```
+### Business Query 6
+**Create a Stored Procedure to Get Top N Products by Net Sales.**
+
+This stored procedure retrieves the **top N products** based on **net sales** for a specified fiscal year.  
+It uses the `net_sales` view, which already accounts for both **pre- and post-invoice discounts**, ensuring accurate revenue reporting.
+
+---
+
+#### SQL Code
+```sql
+CREATE PROCEDURE `get_top_n_products_by_net_sales`(
+    IN in_fiscal_year INT,
+    IN in_limit INT
+)
+BEGIN
+    SELECT 
+        product, 
+        ROUND(SUM(net_sales) / 1000000, 2) AS net_sales_mln
+    FROM
+        net_sales
+    WHERE 
+        fiscal_year = in_fiscal_year
+    GROUP BY
+        product
+    ORDER BY
+        net_sales_mln DESC
+    LIMIT
+        in_limit;
+END;
+```
+### Business Query 7
+**Generate a Region-wise % Net Sales Breakdown by Customers.**
+
+This query generates a **region-wise percentage breakdown of net sales by customers** for a given fiscal year.  
+It supports **regional financial analysis** by showing how much each customer contributes to the total sales in their respective region.
+
+---
+
+#### SQL Query
+
+```sql
+WITH cte1 AS (
+    SELECT
+        c.customer,
+        c.region,
+        ROUND(SUM(net_sales) / 1000000, 2) AS net_sales_mln
+    FROM 
+        net_sales s
+    JOIN
+        dim_customer c USING (customer_code)
+    WHERE  
+        s.fiscal_year = 2021
+    GROUP BY
+        c.customer, c.region
+)
+SELECT 
+    *,
+    net_sales_mln * 100 / SUM(net_sales_mln) OVER(PARTITION BY region) AS pct
+FROM 
+    cte1
+ORDER BY
+    region, net_sales_mln DESC;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/1ef7f383-f404-4b10-a225-274bf0b4ee49">
+  <div align="center"></div>
+</figure>
+
+### Business Query 8
+**Create a Stored Procedure to get Top N Products per Division by Quantity Sold.**
+
+This stored procedure retrieves the **top N selling products** in each division based on the **quantity sold** for a specified fiscal year.  
+It leverages **window functions** to rank products within each division.
+
+---
+#### SQL Code 
+
+```sql
+CREATE PROCEDURE `get_top_n_products_per_division_by_qty_sold`(
+    in_fiscal_year INT,
+    in_top_n INT
+)
+BEGIN
+    WITH cte1 AS (
+        SELECT 
+            p.division, 
+            p.product, 
+            SUM(s.sold_quantity) AS sold_quantity
+        FROM 
+            fact_sales_monthly s
+        JOIN
+            dim_product p ON s.product_code = p.product_code
+        WHERE 
+            s.fiscal_year = in_fiscal_year
+        GROUP BY
+            p.division, p.product
+    ),
+    cte2 AS (
+        SELECT
+            *, 
+            DENSE_RANK() OVER (PARTITION BY division ORDER BY sold_quantity DESC) AS drnk
+        FROM 
+            cte1
+    )
+    SELECT 
+        division,
+        product,
+        sold_quantity
+    FROM
+        cte2
+    WHERE
+        drnk <= in_top_n;
+END
+```
+### Business Query 9
+**Retrieve the Top 2 Markets in Every Region by Gross Sales.**
+
+This query identifies the **top 2 performing markets** within each region based on their **gross sales** for the fiscal year **2021**.  
+It uses the `DENSE_RANK()` window function to handle ties in rankings accurately.
+
+---
+#### SQL Query
+
+```sql
+WITH cte1 AS (
+    SELECT
+        g.market, 
+        c.region, 
+        ROUND(SUM(g.gross_price_total)/1000000, 2) AS gross_sales_mln
+    FROM 
+        gross_sales g
+    JOIN 
+        dim_customer c ON g.customer_code = c.customer_code
+    WHERE
+        g.fiscal_year = 2021
+    GROUP BY 
+        g.market, c.region
+),
+cte2 AS (
+    SELECT
+        *, 
+        DENSE_RANK() OVER (PARTITION BY region ORDER BY gross_sales_mln DESC) AS drnk
+    FROM 
+        cte1
+)
+SELECT
+    market,
+    region,
+    gross_sales_mln
+FROM 
+    cte2
+WHERE 
+    drnk <= 2;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/9e5ad801-cbc5-4caf-9d09-df266f73569e">
+  <div align="center"></div>
+</figure>
+
+## Supply Chain Analytics
+
+### Business Query 1 
+**Generate an Aggregate Forecast Accuracy Report for Customers for a Given Fiscal Year.**
+
+This analysis calculates how accurately **sales forecasts match actual sales** at the **customer level**.  
+It helps identify **forecasting performance gaps** to improve **inventory planning** and **demand management**.
+
+---
+#### Approach
+
+##### Helper Table Creation (`fact_act_est`)
+A combined table is created by merging **actual sales** and **forecast data**, aligned by **date**, **product**, and **customer**.  
+Missing values in `sold_quantity` or `forecast_quantity` are replaced with zeros to maintain data integrity.
+
+##### Forecast Accuracy Calculation
+Using the helper table, the query computes:
+- **Total sold quantity** and **forecast quantity** per customer
+- **Net forecast error** and **net error percentage**
+- **Absolute forecast error** and **absolute error percentage**
+- **Forecast accuracy** as:  
+  `Forecast Accuracy = 100 - Absolute Error %` (capped at 100%)
+
+#### SQL Query
+
+```sql
+-- Step 1: Create helper table combining actual sales and forecast quantities
+CREATE TABLE fact_act_est AS
+(
+    SELECT
+        s.date,
+        s.fiscal_year,
+        s.product_code,
+        s.customer_code,
+        s.sold_quantity,
+        f.forecast_quantity
+    FROM 
+        fact_sales_monthly s 
+    LEFT JOIN 
+        fact_forecast_monthly f 
+    USING (date, customer_code, product_code)
+)
+UNION
+(
+    SELECT
+        f.date,
+        f.fiscal_year,
+        f.product_code,
+        f.customer_code,
+        s.sold_quantity,
+        f.forecast_quantity
+    FROM fact_forecast_monthly f 
+    LEFT JOIN fact_sales_monthly s
+    USING (date, product_code, customer_code)
+);
+
+-- Step 2: Replace NULLs in sold_quantity and forecast_quantity with zeros
+UPDATE fact_act_est
+SET sold_quantity = 0
+WHERE sold_quantity IS NULL;
+
+UPDATE fact_act_est
+SET forecast_quantity = 0
+WHERE forecast_quantity IS NULL;
+
+-- Step 3: Calculate forecast accuracy metrics per customer for fiscal year 2021
+WITH forecast_err_table AS 
+(
+    SELECT 
+        customer_code,
+        SUM(sold_quantity) AS total_sold_quantity,
+        SUM(forecast_quantity) AS total_forecast_quantity,
+        SUM(forecast_quantity - sold_quantity) AS net_err,
+        SUM(forecast_quantity - sold_quantity) * 100 / SUM(forecast_quantity) AS net_err_pct,
+        SUM(ABS(forecast_quantity - sold_quantity)) AS abs_err,
+        SUM(ABS(forecast_quantity - sold_quantity)) * 100 / SUM(forecast_quantity) AS abs_err_pct
+    FROM 
+        fact_act_est
+    WHERE 
+        fiscal_year = 2021
+    GROUP BY
+        customer_code
+)
+SELECT 
+    e.*,
+    c.market,
+    c.customer,
+    IF(abs_err_pct > 100, 0, 100 - abs_err_pct) AS forecast_accuracy
+FROM 
+    forecast_err_table e
+JOIN
+    dim_customer c 
+USING
+    (customer_code)
+ORDER BY
+    forecast_accuracy DESC;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/768af90e-36ab-420a-9056-4c1b475925a2">
+  <div align="center"></div>
+</figure>
+
+#### Stored Procedure: `get_forecast_accuracy`
+
+To streamline the retrieval of **forecast accuracy metrics** for any fiscal year, a **stored procedure** has been created.  
+This procedure encapsulates the logic for calculating **forecast errors and accuracy by customer**, making it easy to run this analysis on demand.
+
+##### SQL Code
+
+```sql
+CREATE PROCEDURE `get_forecast_accuracy`(
+    in_fiscal_year INT
+)
+BEGIN
+    WITH forecast_err_table AS 
+    (
+        SELECT 
+            s.customer_code,
+            SUM(s.sold_quantity) AS total_sold_quantity,
+            SUM(s.forecast_quantity) AS total_forecast_quantity,
+            SUM(forecast_quantity - sold_quantity) AS net_err,
+            SUM(forecast_quantity - sold_quantity) * 100 / SUM(forecast_quantity) AS net_err_pct,
+            SUM(ABS(forecast_quantity - sold_quantity)) AS abs_err,
+            SUM(ABS(forecast_quantity - sold_quantity)) * 100 / SUM(forecast_quantity) AS abs_err_pct
+        FROM 
+            fact_act_est s
+        WHERE 
+            s.fiscal_year = in_fiscal_year
+        GROUP BY
+            customer_code
+    )
+    SELECT 
+        e.*,
+        c.market,
+        c.customer,
+        IF(abs_err_pct > 100, 0, 100 - abs_err_pct) AS forecast_accuracy
+    FROM 
+        forecast_err_table e
+    JOIN
+        dim_customer c 
+    USING
+        (customer_code)
+    ORDER BY
+        forecast_accuracy DESC;
+END
+```
+### Business Query 2
+**Identify Customers with Declining Forecast Accuracy (2020 → 2021).**
+
+This analysis helps **supply chain managers** monitor deteriorating forecast performance by identifying **customers whose forecast accuracy declined** from fiscal year **2020 to 2021**.
+
+---
+#### Steps Involved
+
+1. **Create temporary tables** to calculate forecast accuracy for 2020 and 2021:
+   - Total sold quantity
+   - Total forecast quantity
+   - Net forecast error (%)
+   - Absolute forecast error (%)
+   - Forecast accuracy: `100 - Absolute Error %` (capped at 0% if error > 100%)
+
+2. **Compare** accuracy across both years
+
+3. **Identify customers** whose forecast accuracy has **declined**
+
+#### SQL Query
+
+```sql
+-- Step 1: Compute Forecast Accuracy for 2021
+DROP TABLE IF EXISTS forecast_accuracy_2021;
+CREATE TEMPORARY TABLE forecast_accuracy_2021
+WITH forecast_err_table AS 
+(
+    SELECT 
+        s.customer_code AS customer_code,
+        c.customer AS customer_name,
+        c.market AS market,
+        SUM(s.sold_quantity) AS total_sold_qty,
+        SUM(s.forecast_quantity) AS total_forecast_qty,
+        SUM(s.forecast_quantity - s.sold_quantity) AS net_err,
+        ROUND(SUM(s.forecast_quantity - s.sold_quantity) * 100 / SUM(s.forecast_quantity), 1) AS net_err_pct,
+        SUM(ABS(s.forecast_quantity - s.sold_quantity)) AS abs_err,
+        ROUND(SUM(ABS(s.forecast_quantity - s.sold_quantity)) * 100 / SUM(s.forecast_quantity), 2) AS abs_err_pct
+    FROM 
+        fact_act_est s
+    JOIN
+        dim_customer c 
+        ON s.customer_code = c.customer_code
+    WHERE 
+        s.fiscal_year = 2021
+    GROUP BY
+        s.customer_code
+)
+SELECT 
+    *,
+    IF(abs_err_pct > 100, 0, 100.0 - abs_err_pct) AS forecast_accuracy
+FROM 
+    forecast_err_table;
+
+-- Step 2: Compute Forecast Accuracy for 2020
+DROP TABLE IF EXISTS forecast_accuracy_2020;
+CREATE TEMPORARY TABLE forecast_accuracy_2020
+WITH forecast_err_table AS 
+(
+    SELECT 
+        s.customer_code AS customer_code,
+        c.customer AS customer_name,
+        c.market AS market,
+        SUM(s.sold_quantity) AS total_sold_quantity,
+        SUM(s.forecast_quantity) AS total_forecast_quantity,
+        SUM(s.forecast_quantity - s.sold_quantity) AS net_err,
+        ROUND(SUM(s.forecast_quantity - s.sold_quantity) * 100 / SUM(s.forecast_quantity), 1) AS net_err_pct,
+        SUM(ABS(s.forecast_quantity - s.sold_quantity)) AS abs_err,
+        ROUND(SUM(ABS(s.forecast_quantity - s.sold_quantity)) * 100 / SUM(s.forecast_quantity), 2) AS abs_err_pct
+    FROM 
+        fact_act_est s
+    JOIN
+        dim_customer c 
+        ON s.customer_code = c.customer_code
+    WHERE 
+        s.fiscal_year = 2020
+    GROUP BY
+        s.customer_code
+)
+SELECT 
+    *,
+    IF(abs_err_pct > 100, 0, 100.0 - abs_err_pct) AS forecast_accuracy
+FROM 
+    forecast_err_table;
+
+-- Step 3: Compare and Identify Declines
+SELECT 
+    f_2020.customer_code,
+    f_2020.customer_name,
+    f_2020.market,
+    f_2020.forecast_accuracy AS forecast_acc_2020,
+    f_2021.forecast_accuracy AS forecast_acc_2021
+FROM
+    forecast_accuracy_2020 f_2020
+JOIN
+    forecast_accuracy_2021 f_2021
+    ON f_2020.customer_code = f_2021.customer_code
+WHERE
+    f_2021.forecast_accuracy < f_2020.forecast_accuracy
+ORDER BY
+    f_2020.forecast_accuracy DESC;
+```
+<figure>
+  <img src="https://github.com/user-attachments/assets/71eac859-936c-4060-a075-517a34f09631">
+  <div align="center"></div>
+</figure>
+
+## Tools & Technologies
+
+- **SQL**: Core language used to perform ad hoc analysis and extract insights from financial and supply chain data.
+- **MySQL Workbench**: Primary environment for writing and executing SQL queries.
+- **Microsoft Excel**: Briefly used for support tasks where needed.
+
+## Let's Connect
+
+If you found this project interesting or have questions, feel free to connect with me:
+
+- [LinkedIn](https://www.linkedin.com/in/muhammad-bilal-ayub/) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
