@@ -1,5 +1,27 @@
 # Finance and Supply Chain Ad Hoc Analytics using SQL
 
+## Table of Contents
+
+-  [Project Overview](#project-overview)
+-  [AtliQ Hardwares Business Model](#atliq-hardwares-business-model)
+-  [Data Sources](#data-sources)
+-  [Finance Analytics](#finance-analytics)
+     - [Business Query 1](#business-query-1)
+     - [Business Query 2](#business-query-2)
+     - [Business Query 3](#business-query-3)
+     - [Business Query 4](#business-query-4)
+     - [Business Query 5](#business-query-5)
+     - [Business Query 6](#business-query-6)
+     - [Business Query 7](#business-query-7)
+     - [Business Query 8](#business-query-8)
+     - [Business Query 9](#business-query-9)
+- [Supply Chain Analytics](#supply-chain-analytics)
+     - [Business Query 1](#business-query-1)
+     - [Business Query 2](#business-query-2)
+- [Tools & Technologies](#tools--technologies)
+- [Let's Connect](#lets-connect)
+
+
 ## Project Overview
 
 In 2018, AtliQ Hardwares — a rapidly growing manufacturer of computer peripherals — faced a major operational disruption when critical Excel planning files became corrupted and irrecoverable. This incident exposed the limitations of relying on spreadsheets for business-critical operations and sparked an internal push toward more reliable, scalable data solutions.
